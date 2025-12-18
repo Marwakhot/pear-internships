@@ -132,7 +132,7 @@ Server running at http://localhost:3000
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 pear-internships/
@@ -190,7 +190,7 @@ pear-internships/
 
 ---
 
-## 🔌 API Endpoints
+## API Endpoints
 
 ### Student Routes
 | Method | Endpoint | Description |
@@ -225,7 +225,7 @@ pear-internships/
 
 ---
 
-## 💾 Database Schema
+## Database Schema
 
 ### Students Table
 ```sql
