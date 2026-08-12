@@ -1,9 +1,11 @@
 const express = require('express');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
 const db = require('./db'); // connects to MySQL database
 
 const app = express();
 const PORT = 3000;
+const SALT_ROUNDS = 10;
 
 app.use(cors());
 app.use(express.json()); // to parse JSON from requests
@@ -14,32 +16,39 @@ app.listen(PORT, () => {
 });
 
 // Signup STUDENT Route
-app.post('/signup', (req, res) => {
+app.post('/signup', async (req, res) => {
   const { name, email, dob, password, role, phone, major, university } = req.body;
 
-  const sql = `
-    INSERT INTO students (name, email, password, role, phone, major, university, dob)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `;
+  try {
+    const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-  db.query(sql, [name, email, password, role, phone, major, university, dob], (err, result) => {
-    if (err) {
-      console.error('Signup error:', err);
-      // If duplicate email (ER_DUP_ENTRY MySQL error code is 1062)
-      if (err.code === 'ER_DUP_ENTRY') {
-        return res.status(400).json({ success: false, message: 'Email already exists' });
-      }
-      return res.status(500).json({ success: false, message: 'Signup failed' });
-    }
+    const sql = `
+      INSERT INTO students (name, email, password, role, phone, major, university, dob)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `;
 
-    res.status(200).json({
-      success: true,
-      message: 'Signup successful!',
-      student: {
-        name, email, dob, role, phone, major, university
+    db.query(sql, [name, email, hashedPassword, role, phone, major, university, dob], (err, result) => {
+      if (err) {
+        console.error('Signup error:', err);
+        // If duplicate email (ER_DUP_ENTRY MySQL error code is 1062)
+        if (err.code === 'ER_DUP_ENTRY') {
+          return res.status(400).json({ success: false, message: 'Email already exists' });
+        }
+        return res.status(500).json({ success: false, message: 'Signup failed' });
       }
+
+      res.status(200).json({
+        success: true,
+        message: 'Signup successful!',
+        student: {
+          name, email, dob, role, phone, major, university
+        }
+      });
     });
-  });
+  } catch (err) {
+    console.error('Signup hashing error:', err);
+    return res.status(500).json({ success: false, message: 'Signup failed' });
+  }
 });
 
 
@@ -47,16 +56,22 @@ app.post('/signup', (req, res) => {
 app.post('/login', (req, res) => {
   const { email, password } = req.body;
 
-  const sql = 'SELECT * FROM students WHERE email = ? AND password = ?';
+  const sql = 'SELECT * FROM students WHERE email = ?';
 
-  db.query(sql, [email, password], (err, results) => {
+  db.query(sql, [email], async (err, results) => {
     if (err) {
       console.error('Login error:', err);
       return res.status(500).json({ message: 'Server error during login' });
     }
 
-    if (results.length > 0) {
-      const student = results[0];
+    if (results.length === 0) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const student = results[0];
+    const passwordMatches = await bcrypt.compare(password, student.password);
+
+    if (passwordMatches) {
       res.status(200).json({
         message: 'Login successful!',
         student: {
@@ -124,21 +139,24 @@ app.put('/student/:id/password', (req, res) => {
   const { currentPassword, newPassword } = req.body;
 
   const checkSql = 'SELECT password FROM students WHERE id = ?';
-  db.query(checkSql, [studentId], (err, results) => {
+  db.query(checkSql, [studentId], async (err, results) => {
     if (err) {
       console.error('Password check error:', err);
       return res.status(500).json({ message: 'Error checking current password' });
     }
 
-    console.log("Stored password:", results[0]?.password);
-    console.log("Current password entered:", currentPassword);
-
-    if (results.length === 0 || results[0].password.trim() !== currentPassword.trim()) {
+    if (results.length === 0) {
       return res.status(401).json({ message: 'Current password is incorrect' });
     }
 
+    const passwordMatches = await bcrypt.compare(currentPassword.trim(), results[0].password);
+    if (!passwordMatches) {
+      return res.status(401).json({ message: 'Current password is incorrect' });
+    }
+
+    const hashedNewPassword = await bcrypt.hash(newPassword.trim(), SALT_ROUNDS);
     const updateSql = 'UPDATE students SET password = ? WHERE id = ?';
-    db.query(updateSql, [newPassword, studentId], (err, result) => {
+    db.query(updateSql, [hashedNewPassword, studentId], (err, result) => {
       if (err) {
         console.error('Password update error:', err);
         return res.status(500).json({ message: 'Failed to update password' });
@@ -227,37 +245,50 @@ WHERE a.student_email = ?`;
 
 
 //COMAPNY SIGN UP
-app.post('/company/signup', (req, res) => {
+app.post('/company/signup', async (req, res) => {
   const { name, email, address, phone, password } = req.body;
 
-  const sql = `
-    INSERT INTO companies (name, email, address, phone, password)
-    VALUES (?, ?, ?, ?, ?)
-  `;
+  try {
+    const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-  db.query(sql, [name, email, address, phone, password], (err, result) => {
-    if (err) {
-      console.error('Company signup error:', err);
-      return res.status(500).json({ message: 'Signup failed' });
-    }
-    res.status(200).json({ message: 'Company signup successful!' });
-  });
+    const sql = `
+      INSERT INTO companies (name, email, address, phone, password)
+      VALUES (?, ?, ?, ?, ?)
+    `;
+
+    db.query(sql, [name, email, address, phone, hashedPassword], (err, result) => {
+      if (err) {
+        console.error('Company signup error:', err);
+        return res.status(500).json({ message: 'Signup failed' });
+      }
+      res.status(200).json({ message: 'Company signup successful!' });
+    });
+  } catch (err) {
+    console.error('Company signup hashing error:', err);
+    return res.status(500).json({ message: 'Signup failed' });
+  }
 });
 
 //COMPANY LOGIN
 app.post('/company-login', (req, res) => {
   const { email, password } = req.body;
 
-  const sql = 'SELECT * FROM companies WHERE email = ? AND password = ?';
+  const sql = 'SELECT * FROM companies WHERE email = ?';
 
-  db.query(sql, [email, password], (err, results) => {
+  db.query(sql, [email], async (err, results) => {
     if (err) {
       console.error('Company login error:', err);
       return res.status(500).json({ message: 'Server error during login' });
     }
 
-    if (results.length > 0) {
-      const company = results[0];
+    if (results.length === 0) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const company = results[0];
+    const passwordMatches = await bcrypt.compare(password, company.password);
+
+    if (passwordMatches) {
       res.status(200).json({
         message: 'Login successful!',
         company: {
@@ -326,18 +357,24 @@ app.put('/company/:id/password', (req, res) => {
 
   const sql = 'SELECT password FROM companies WHERE id = ?';
 
-  db.query(sql, [companyId], (err, results) => {
+  db.query(sql, [companyId], async (err, results) => {
     if (err) {
       console.error('Password check error:', err);
       return res.status(500).json({ message: 'Password change failed' });
     }
 
-    if (results.length === 0 || results[0].password !== currentPassword) {
+    if (results.length === 0) {
       return res.status(400).json({ message: 'Current password is incorrect' });
     }
 
+    const passwordMatches = await bcrypt.compare(currentPassword, results[0].password);
+    if (!passwordMatches) {
+      return res.status(400).json({ message: 'Current password is incorrect' });
+    }
+
+    const hashedNewPassword = await bcrypt.hash(newPassword, SALT_ROUNDS);
     const updateSql = 'UPDATE companies SET password = ? WHERE id = ?';
-    db.query(updateSql, [newPassword, companyId], (updateErr, updateResult) => {
+    db.query(updateSql, [hashedNewPassword, companyId], (updateErr, updateResult) => {
       if (updateErr) {
         console.error('Password update error:', updateErr);
         return res.status(500).json({ message: 'Failed to update password' });
@@ -387,7 +424,7 @@ app.put('/company/internships/:id', (req, res) => {
   const { title, description, duration, location, category, paid, type } = req.body;
 
   const sql = `
-    UPDATE internships 
+    UPDATE internships
     SET title = ?, description = ?, duration = ?, location = ?, category = ?, paid = ?, type = ?
     WHERE id = ?
   `;
@@ -424,7 +461,7 @@ app.get('/company/applications/:companyId', (req, res) => {
   const companyId = req.params.companyId;
 
   const sql = `
-    SELECT 
+    SELECT
       a.id AS application_id,
       a.student_name,
       a.student_email,
